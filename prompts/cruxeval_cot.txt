@@ -1,0 +1,6 @@
+You are a helpful programming assistant.
+Given this code:
+{code}
+
+If the input is {input_val}, what is the output?
+Let's think step by step about the execution trace, but end your response with "Answer: X" where X is the exact python literal output.

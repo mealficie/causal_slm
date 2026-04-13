@@ -1,0 +1,11 @@
+You are a helpful assistant evaluating a counterfactual scenario.
+Given the following scenario:
+{premise}
+
+Question: {question}
+A) {choice_a}
+B) {choice_b}
+C) {choice_c}
+D) {choice_d}
+
+Let's think step by step to find the correct answer, but end your response with "Answer: X" where X is the correct letter.

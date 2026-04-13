@@ -1,0 +1,5 @@
+Given this code:
+{code}
+
+If the input is {input_val}, what is the output?
+Answer with just the literal python output value.

@@ -1,0 +1,10 @@
+Given the following scenario:
+{premise}
+
+Question: {question}
+A) {choice_a}
+B) {choice_b}
+C) {choice_c}
+D) {choice_d}
+
+Answer with just the letter of the correct choice.

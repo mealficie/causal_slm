@@ -96,7 +96,7 @@ def load_cruxeval(sample_size: int = None) -> List[Dict[str, Any]]:
     - domain: 'code'
     """
     # Load cruxeval from huggingface datasets
-    ds = load_dataset("cruxeval-org/cruxeval", trust_remote_code=True)
+    ds = load_dataset("cruxeval-org/cruxeval")
     
     # Normally we evaluate on 'test' split or 'train' for baselines.
     # We will use the test split.

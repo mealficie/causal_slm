@@ -1,0 +1,13 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Config file
+config.py
+
+# Downloaded Data and Model Caches
+data/crass/*.csv
+results/
+.ipynb_checkpoints/
+*.egg-info/

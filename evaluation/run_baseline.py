@@ -19,48 +19,49 @@ def get_prompt_template(domain: str, condition: str) -> str:
     with open(template_path, "r", encoding="utf-8") as f:
         return f.read()
 
-def run_condition(model, tokenizer, data, condition: str, domain: str, model_name: str, out_file: str) -> dict:
+def run_condition(model, tokenizer, data, condition: str, domain: str, model_name: str, out_file: str, batch_size: int = 8) -> dict:
     # Get the prompt template
     template_str = get_prompt_template(domain, condition)
     
     results = []
     
     print(f"Running {model_name} on {domain} ({condition}) - {len(data)} examples")
-    for item in tqdm(data):
+    
+    # Process data in batches
+    for i in tqdm(range(0, len(data), batch_size)):
+        batch_items = data[i:i+batch_size]
         start_time = time.time()
         
-        # Build prompt
-        if domain == "crass":
-            prompt = template_str.format(
-                premise=item['context']['premise'],
-                counterfactual=item['context']['counterfactual'],
-                question=item['question'],
-                choice_a=item['choices']['A'],
-                choice_b=item['choices']['B'],
-                choice_c=item['choices']['C'],
-                choice_d=item['choices']['D']
-            )
-        else: # cruxeval
-            prompt = template_str.format(
-                code=item['context']['code'],
-                input_val=item['context']['input']
-            )
+        batch_prompts = []
+        for item in batch_items:
+            if domain == "crass":
+                prompt = template_str.format(
+                    premise=item['context']['premise'],
+                    counterfactual=item['context']['counterfactual'],
+                    question=item['question'],
+                    choice_a=item['choices']['A'],
+                    choice_b=item['choices']['B'],
+                    choice_c=item['choices']['C'],
+                    choice_d=item['choices']['D']
+                )
+            else: # cruxeval
+                prompt = template_str.format(
+                    code=item['context']['code'],
+                    input_val=item['context']['input']
+                )
+                
+            messages = [{"role": "user", "content": prompt}]
+            prompt_str = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            batch_prompts.append(prompt_str)
             
-        # Apply chat template
-        messages = [{"role": "user", "content": prompt}]
-        
-        prompt_str = tokenizer.apply_chat_template(
-            messages, 
-            add_generation_prompt=True, 
-            tokenize=False
-        )
-        inputs = tokenizer(prompt_str, return_tensors="pt").to(model.device)
+        inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True).to(model.device)
         
         MAX_RETRIES = 3
+        model_outputs = []
+        batch_predicted = []
+        
         for attempt in range(MAX_RETRIES):
-            # Attempt 0 is deterministic (Greedy). Subsequent attempts use temperature sampling to force variant paths.
             use_sampling = (attempt > 0)
-            
             outputs = model.generate(
                 **inputs,
                 max_new_tokens=1024,
@@ -70,39 +71,44 @@ def run_condition(model, tokenizer, data, condition: str, domain: str, model_nam
                 pad_token_id=tokenizer.eos_token_id
             )
             
-            # Only take the newly generated tokens
-            generated_ids = outputs[0][inputs["input_ids"].shape[1]:]
-            model_output = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+            # Sliced batch tensor decoding
+            generated_ids = outputs[:, inputs["input_ids"].shape[1]:]
+            model_outputs = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+            model_outputs = [o.strip() for o in model_outputs]
             
-            predicted = metrics.extract_answer(model_output, domain)
+            # Map predictions
+            batch_predicted = [metrics.extract_answer(o, domain) for o in model_outputs]
             
-            # If the extraction script successfully parsed the logic, break the retry loop early!
-            if predicted != "UNKNOWN":
+            # If any extraction fails, re-generate the whole batch using the temperature variance
+            if "UNKNOWN" not in batch_predicted:
                 break
+                
+        # Distribute latency symmetrically
+        latency_per_item = ((time.time() - start_time) * 1000) / len(batch_items)
         
-        gt = item['ground_truth']
-        
-        if domain == "cruxeval":
-            # Loose matching for strings / code literals by stripping quotes symmetrically
-            clean_gt = str(gt).strip("'\"").strip()
-            clean_pred = predicted.strip("'\"").strip()
-            correct = (clean_pred == clean_gt)
-        else:
-            correct = (predicted == gt)
-        
-        latency = (time.time() - start_time) * 1000
-        
-        results.append({
-            "id": item["id"],
-            "predicted": predicted,
-            "ground_truth": gt,
-            "correct": correct,
-            "latency_ms": latency,
-            "model_output": model_output
-        })
-        
-        # CHECKPOINTING: Save state every 20 iterations to prevent catastrophic data loss
-        if len(results) % 20 == 0:
+        for idx, item in enumerate(batch_items):
+            predicted = batch_predicted[idx]
+            model_output = model_outputs[idx]
+            gt = item['ground_truth']
+            
+            if domain == "cruxeval":
+                clean_gt = str(gt).strip("'\"").strip()
+                clean_pred = predicted.strip("'\"").strip()
+                correct = (clean_pred == clean_gt)
+            else:
+                correct = (predicted == gt)
+                
+            results.append({
+                "id": item["id"],
+                "predicted": predicted,
+                "ground_truth": gt,
+                "correct": correct,
+                "latency_ms": latency_per_item,
+                "model_output": model_output
+            })
+            
+        # CHECKPOINTING: Save state dynamically considering batch sizing leaps
+        if len(results) % 20 < batch_size:
             checkpoint_data = {
                 "model": model_name,
                 "domain": domain,
@@ -129,6 +135,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, required=True, choices=list(config.MODELS.keys()))
     parser.add_argument("--domain", type=str, required=True, choices=config.BENCHMARKS)
     parser.add_argument("--sample", type=int, default=config.SAMPLE_SIZE_DEV)
+    parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--condition", type=str, default="all", choices=["zero_shot", "cot", "all"])
     args = parser.parse_args()
     
@@ -147,7 +154,7 @@ if __name__ == "__main__":
         out_file = os.path.join(out_dir, f"{args.domain}_{condition}_{timestamp_str}.json")
         
         # Execute run condition with localized out_file parameter for checkpointing
-        res_data = run_condition(model, tokenizer, data, condition, args.domain, args.model, out_file)
+        res_data = run_condition(model, tokenizer, data, condition, args.domain, args.model, out_file, args.batch_size)
         
         metrics.save_results(res_data, out_file)
         print(f"Results finalized to {out_file}. Final Metrics: {res_data['metrics']}")

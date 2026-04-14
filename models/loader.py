@@ -27,16 +27,19 @@ def load_model(model_name: str, quantize: bool = False):
         
     hf_id = config.MODELS[model_name]
     logger.info(f"Loading {hf_id}...")
-    
-    # To reduce issues with out of memory even during loading, we use device_map="auto"
-    # and load with bfloat16 for modern cards (RTX A4500 is Ampere, supports bf16 natively)
-    
+        
     tokenizer = AutoTokenizer.from_pretrained(hf_id, cache_dir=config.CACHE_DIR)
+    
+    # Configure native batching alignments
+    tokenizer.padding_side = "left"
+    if not tokenizer.pad_token:
+        tokenizer.pad_token = tokenizer.eos_token
     
     # Setup generation config kwargs
     model_kwargs = {
         "cache_dir": config.CACHE_DIR,
         "device_map": "auto",
+        "attn_implementation": "sdpa",
         "torch_dtype": torch.bfloat16
     }
     

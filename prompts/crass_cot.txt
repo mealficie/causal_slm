@@ -8,4 +8,4 @@ B) {choice_b}
 C) {choice_c}
 D) {choice_d}
 
-Let's think step by step to find the correct answer, but end your response with "Answer: X" where X is the correct letter.
+Let's think step by step to find the correct answer in exactly 3-5 sentences. Be extremely concise to avoid rambling. End your response strictly with "[Answer] X" where X is the correct letter.

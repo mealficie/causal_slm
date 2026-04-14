@@ -3,4 +3,4 @@ Given this code:
 {code}
 
 If the input is {input_val}, what is the output?
-Let's think step by step about the execution trace, but end your response with "Answer: X" where X is the exact python literal output.
+Let's think step by step about the execution trace in exactly 3-5 sentences. Be extremely concise to avoid rambling. End your response strictly with "Out: X" where X is the exact python literal output.

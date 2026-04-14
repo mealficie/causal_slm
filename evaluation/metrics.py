@@ -26,20 +26,32 @@ def extract_answer(model_output: str, domain: str) -> str:
         lines = [l for l in lines if l.strip()]
         if lines:
             ans = lines[-1].strip()
-            # Often they format like "Answer: 15" or just "15"
+            # Often they format like "Answer: 15", "Out: 15", or just "15"
+            if "Out:" in ans:
+                ans = ans.split("Out:")[-1].strip()
             if "Answer:" in ans:
                 ans = ans.split("Answer:")[-1].strip()
-            return ans
+                
+            # Strip literal python quotes to match GT strings natively
+            return ans.strip("'\"")
         return "UNKNOWN"
     
     return "UNKNOWN"
 
-def compute_accuracy(results: list) -> float:
-    """Computes overall accuracy from a list of result dicts."""
+def compute_metrics(results: list) -> dict:
+    """Computes comprehensive evaluation metrics from the run array."""
     if not results:
-        return 0.0
+        return {"accuracy": 0.0, "format_compliance": 0.0, "avg_latency_ms": 0.0}
+        
     correct = sum(1 for r in results if r.get("correct", False))
-    return correct / len(results)
+    valid_format = sum(1 for r in results if r.get("predicted", "UNKNOWN") != "UNKNOWN")
+    total_latency = sum(r.get("latency_ms", 0) for r in results)
+    
+    return {
+        "accuracy": correct / len(results),
+        "format_compliance": valid_format / len(results),
+        "avg_latency_ms": total_latency / len(results)
+    }
 
 def save_results(results_data: dict, filepath: str):
     """Saves the results dictionary to JSON."""

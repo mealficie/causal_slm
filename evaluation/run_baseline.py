@@ -27,7 +27,6 @@ def run_condition(model, tokenizer, data, condition: str, domain: str, model_nam
     
     print(f"Running {model_name} on {domain} ({condition}) - {len(data)} examples")
     
-    # Process data in batches
     for i in tqdm(range(0, len(data), batch_size)):
         batch_items = data[i:i+batch_size]
         start_time = time.time()

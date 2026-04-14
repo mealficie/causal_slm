@@ -5,13 +5,18 @@ import re
 def extract_answer(model_output: str, domain: str) -> str:
     """Extracts the final answer from the model output."""
     if domain == "crass":
-        # For CRASS, we expect a single letter answer A, B, C, or D.
-        # We can look for the last standalone letter A-D
+        # Highest Priority (CoT constraint): We explicitly seek our imposed format suffix
+        match = re.search(r'\[Answer\]\s*([A-D])', model_output, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+            
+        # Fallback Priority (Zero-Shot condition): Model generally outputs standalone letters
+        # We look for the last standalone letter A-D 
         matches = re.findall(r'\b([A-D])\b', model_output.upper())
         if matches:
             return matches[-1]
         
-        # Fallback: just look for the first occurrence of A, B, C, D in the response near the end
+        # Absolute Worst Case: just look for the first occurrence of A, B, C, D scanning backwards.
         for char in reversed(model_output.upper()):
             if char in ['A', 'B', 'C', 'D']:
                 return char
@@ -20,21 +25,20 @@ def extract_answer(model_output: str, domain: str) -> str:
     elif domain == "cruxeval":
         # For CRUXEval, we typically want the exact python literal
         # e.g., '15', 'True', '"hello"'
-        # Given it's generative, let's grab the last line or what seems to be the answer
-        lines = model_output.strip().split('\n')
-        # Filter empty lines
-        lines = [l for l in lines if l.strip()]
-        if lines:
-            ans = lines[-1].strip()
-            # Often they format like "Answer: 15", "Out: 15", or just "15"
-            if "Out:" in ans:
-                ans = ans.split("Out:")[-1].strip()
-            if "Answer:" in ans:
-                ans = ans.split("Answer:")[-1].strip()
-                
-            # Strip literal python quotes to match GT strings natively
-            return ans.strip("'\"")
-        return "UNKNOWN"
+        ans = model_output.strip()
+        
+        # Regex to capture everything after "Out:" or "Answer:" to preserve internal newlines
+        match = re.search(r'(?:Out|Answer):\s*(.*)', ans, flags=re.DOTALL | re.IGNORECASE)
+        if match:
+            ans = match.group(1).strip()
+            
+        # Strip python markdown block ticks if the SLM wrapped its answer in formatting
+        ans = re.sub(r'^```[a-zA-Z]*\n', '', ans) # remove starting ```python\n
+        ans = re.sub(r'```$', '', ans)            # remove ending ```
+        ans = ans.strip()
+        
+        # Strip literal python quotes to match GT strings natively
+        return ans.strip("'\"")
     
     return "UNKNOWN"
 

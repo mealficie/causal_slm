@@ -84,9 +84,9 @@ def run_condition(model, tokenizer, data, condition: str, domain: str, model_nam
         
         if domain == "cruxeval":
             # Loose matching for strings / code literals by stripping quotes symmetrically
-            clean_gt = str(gt).strip("'\"")
-            clean_pred = predicted.strip("'\"")
-            correct = (clean_pred == clean_gt or clean_gt in clean_pred)
+            clean_gt = str(gt).strip("'\"").strip()
+            clean_pred = predicted.strip("'\"").strip()
+            correct = (clean_pred == clean_gt)
         else:
             correct = (predicted == gt)
         

@@ -94,15 +94,17 @@ class CausalGraph:
         for token in doc:
             ent_key = token.lemma_.lower() if token.lemma_.lower() in active_entities else token.text.lower()
             if ent_key in active_entities:
-                adjs = [child.text for child in token.children if child.dep_ == 'amod']
+                adjs = [child.text for child in token.children if child.dep_ in ('amod', 'compound', 'nummod')]
                 if adjs:
-                    adj_map[ent_key] = " ".join(adjs)
+                    if ent_key not in adj_map:
+                        adj_map[ent_key] = []
+                    adj_map[ent_key].extend(adjs)
 
         # 2. Spawn baseline nodes with properties
         for ent in active_entities:
             attrs = {"type": "entity"}
             if ent in adj_map:
-                attrs["adjective"] = adj_map[ent]
+                attrs["adjective"] = " ".join(adj_map[ent])
             self.graph.add_node(ent, **attrs)
 
         # 3. Enhanced NLP topological mapping bridging prep dependencies

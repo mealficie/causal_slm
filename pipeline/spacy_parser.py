@@ -62,6 +62,27 @@ def parse_nl(premise: str, question: str) -> ParsedQuery:
     
     interventions = []
     
+    # Sweep 0: Comparative/Baseline Clause Blacklisting
+    # Identify subtrees associated with 'instead of' to filter out baseline comparison noise.
+    blacklist_tokens = set()
+    for token in q_doc:
+        if token.text.lower() == 'instead':
+            blacklist_tokens.add(token.text.lower())
+            for t in token.subtree:
+                blacklist_tokens.add(t.text.lower())
+            
+            # Robust check for 'instead of' variants:
+            # Case 1: 'of' is the parent (as found in some sm model parses)
+            if token.head.text.lower() == 'of':
+                for t in token.head.subtree:
+                    blacklist_tokens.add(t.text.lower())
+            
+            # Case 2: 'of' is a sibling under a common verb
+            for sibling in token.head.children:
+                if sibling.text.lower() == 'of':
+                    for t in sibling.subtree:
+                        blacklist_tokens.add(t.text.lower())
+    
     # Sweep 1: Extract Negation Checks
     for token in q_doc:
         if token.dep_ == 'neg':
@@ -73,6 +94,31 @@ def parse_nl(premise: str, question: str) -> ParsedQuery:
                 "origin": "existing_in_premise"
             })
             break
+            
+    # Sweep 1.5: Passive Property Modifiers (e.g., "made of steel")
+    material_nouns = set()
+    for token in q_doc:
+        if token.dep_ == 'pobj' and token.head.text.lower() == 'of' and token.head.head.text.lower() == 'made':
+            material = token.text.lower()
+            target = None
+            for child in token.head.head.children:
+                if child.dep_ in ('nsubjpass', 'nsubj', 'nsubj'):
+                    ent_match = child.lemma_.lower() if child.lemma_.lower() in all_entities else child.text.lower()
+                    if ent_match in all_entities:
+                        target = ent_match
+                        break
+            if target:
+                interventions.append({
+                    "type": "property_addition",
+                    "target_entity": [target],
+                    "attribute": material,
+                    "relation_to_premise": "modified_execution",
+                    "origin": "introduced_in_counterfactual"
+                })
+                if material in new_nouns:
+                    material_nouns.add(material)
+                    
+    new_nouns = new_nouns - material_nouns
             
     # Sweep 2: Universal Substitution & Garbage Collection
     if new_nouns or dropped_nouns:
@@ -91,22 +137,30 @@ def parse_nl(premise: str, question: str) -> ParsedQuery:
         interventions.append(sub_dict)
             
     # Sweep 3: Enhanced Property Addition Checks
+    # We aggregate amod/nummod children by head to support "two more books"
+    q_props = {}
     for token in q_doc:
-        if token.dep_ == 'amod':
+        if token.dep_ in ('amod', 'nummod') and token.text.lower() not in blacklist_tokens:
             target = token.head.text.lower()
-            is_new = target in new_nouns
-            if is_new:
-                for inv in interventions:
-                    if inv["type"] == "entity_substitution" and target in inv["target_entity"]:
-                        inv["attribute"] = token.text.lower()
-            else:
-                interventions.append({
-                    "type": "property_addition",
-                    "target_entity": [target],
-                    "attribute": token.text.lower(),
-                    "relation_to_premise": "modified_execution",
-                    "origin": "existing_in_premise"
-                })
+            if target not in q_props:
+                q_props[target] = []
+            q_props[target].append(token.text.lower())
+
+    for target, mods in q_props.items():
+        is_new = target in new_nouns
+        attr_val = " ".join(mods)
+        if is_new:
+            for inv in interventions:
+                if inv["type"] == "entity_substitution" and target in inv["target_entity"]:
+                    inv["attribute"] = attr_val
+        else:
+            interventions.append({
+                "type": "property_addition",
+                "target_entity": [target],
+                "attribute": attr_val,
+                "relation_to_premise": "modified_execution",
+                "origin": "existing_in_premise"
+            })
 
     # Extracts explicitly isolated adjectives (like "off" or "cool") and maps them mathematically!
     # Crucially, we skip any adjectives explicitly bound in Sweep 3 to prevent Property Leaks.
@@ -116,7 +170,7 @@ def parse_nl(premise: str, question: str) -> ParsedQuery:
             for w in inv["attribute"].split():
                 mapped_adjs.add(w)
 
-    q_adjs = [t.text.lower() for t in q_doc if (t.pos_ == "ADJ" or t.text.lower() in ("off", "cool")) and t.text.lower() not in mapped_adjs]
+    q_adjs = [t.text.lower() for t in q_doc if (t.pos_ in ("ADJ", "NUM") or t.text.lower() in ("off", "cool")) and t.text.lower() not in mapped_adjs and t.text.lower() not in blacklist_tokens]
     if q_adjs:
         target = None
         for chunk in q_doc.noun_chunks:
@@ -134,6 +188,33 @@ def parse_nl(premise: str, question: str) -> ParsedQuery:
                     "attribute": " ".join(q_adjs),
                     "relation_to_premise": "modified_execution",
                     "origin": "introduced_in_counterfactual"
+                })
+
+    # Sweep 4: Relationship Extraction (Action Shifts)
+    for token in q_doc:
+        if token.pos_ == "VERB" and token.dep_ != "aux":
+            subj = None
+            obj = None
+            prep_obj = None
+            
+            for child in token.children:
+                child_ent = child.text.lower()
+                if child.dep_ == "nsubj" and child_ent in all_entities:
+                    subj = child_ent
+                elif child.dep_ in ("dobj", "pobj") and child_ent in all_entities:
+                    obj = child_ent
+                elif child.dep_ == "prep":
+                    for grandchild in child.children:
+                        if grandchild.dep_ == "pobj" and grandchild.text.lower() in all_entities:
+                            prep_obj = grandchild.text.lower()
+            
+            if subj and (obj or prep_obj):
+                interventions.append({
+                    "type": "relationship_shift",
+                    "source": subj,
+                    "target": obj or prep_obj,
+                    "relation": token.lemma_,
+                    "relation_to_premise": "modified_execution"
                 })
     
     return ParsedQuery(

@@ -29,6 +29,8 @@ class InterventionEngine:
             # Property updates handle state shifts rather than topological shifts
             elif t == "property_addition":
                 self._execute_attribute_shift(new_graph.graph, action)
+            elif t == "relationship_shift":
+                self._execute_relationship_shift(new_graph.graph, action)
 
         return new_graph
 
@@ -47,8 +49,8 @@ class InterventionEngine:
         target_entities = action.get("target_entity", [])
         deleted_entities = action.get("deleted_entities", [])
         
-        # If there's an exact 1 substitution target
-        if len(target_entities) == 1 and len(deleted_entities) > 0:
+        # If there's an exact 1 substitution target if targets are more than 1
+        if len(target_entities) == 1 and len(deleted_entities) > 0 and len(deleted_entities) <= 2:
             new_node = target_entities[0]
             
             # Find the deleted node that actually possesses physical dependencies to hijack!
@@ -86,7 +88,10 @@ class InterventionEngine:
                 if not G.has_node(ent):
                     G.add_node(ent, type="entity")
                 if "attribute" in action and action["attribute"]:
+                    old_adj = G.nodes[ent].get("adjective")
                     G.nodes[ent]["adjective"] = action["attribute"]
+                    if old_adj and old_adj != action["attribute"]:
+                        G.nodes[ent]["replaced_adjective"] = old_adj
             
                     
     def _execute_severance(self, G: nx.DiGraph, action: dict):
@@ -100,7 +105,20 @@ class InterventionEngine:
         """ Adds adjectives or statuses locally"""
         for ent in action.get("target_entity", []):
             if G.has_node(ent):
+                old_adj = G.nodes[ent].get("adjective")
                 G.nodes[ent]["adjective"] = action.get("attribute", None)
+                if old_adj and old_adj != G.nodes[ent]["adjective"]:
+                    G.nodes[ent]["replaced_adjective"] = old_adj
+
+    def _execute_relationship_shift(self, G: nx.DiGraph, action: dict):
+        """ Injects new causal dependencies derived from the counterfactual question """
+        source = action.get("source")
+        target = action.get("target")
+        relation = action.get("relation")
+        
+        if source and target and G.has_node(source) and G.has_node(target):
+            # We add or update the relation between the source and target
+            G.add_edge(source, target, relation=relation)
 
     # --- Utility Mock ---
     def _mock_empty_query(self, domain: str):

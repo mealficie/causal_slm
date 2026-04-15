@@ -90,24 +90,50 @@ def parse_nl(premise: str, question: str) -> ParsedQuery:
                     all_entities.remove(dead_noun)
         interventions.append(sub_dict)
             
-    # Sweep 3: Property Addition Checks
+    # Sweep 3: Enhanced Property Addition Checks
     for token in q_doc:
         if token.dep_ == 'amod':
             target = token.head.text.lower()
             is_new = target in new_nouns
             if is_new:
-                # Merge into the existing substitution block!
                 for inv in interventions:
                     if inv["type"] == "entity_substitution" and target in inv["target_entity"]:
                         inv["attribute"] = token.text.lower()
             else:
-                # Spawn an independent surgical edit for the existing artifact
                 interventions.append({
                     "type": "property_addition",
                     "target_entity": [target],
                     "attribute": token.text.lower(),
                     "relation_to_premise": "modified_execution",
                     "origin": "existing_in_premise"
+                })
+
+    # Extracts explicitly isolated adjectives (like "off" or "cool") and maps them mathematically!
+    # Crucially, we skip any adjectives explicitly bound in Sweep 3 to prevent Property Leaks.
+    mapped_adjs = set()
+    for inv in interventions:
+        if inv["type"] == "property_addition" and inv.get("attribute"):
+            for w in inv["attribute"].split():
+                mapped_adjs.add(w)
+
+    q_adjs = [t.text.lower() for t in q_doc if (t.pos_ == "ADJ" or t.text.lower() in ("off", "cool")) and t.text.lower() not in mapped_adjs]
+    if q_adjs:
+        target = None
+        for chunk in q_doc.noun_chunks:
+            # Skip irrelevant interrogative pronouns like 'What'
+            if chunk.root.text.lower() in all_entities and chunk.root.text.lower() != "what":
+                target = chunk.root.text.lower()
+                break
+        
+        if target:
+            exists = any(inv.get("type") == "property_addition" and inv.get("target_entity") == [target] for inv in interventions)
+            if not exists:
+                interventions.append({
+                    "type": "property_addition",
+                    "target_entity": [target],
+                    "attribute": " ".join(q_adjs),
+                    "relation_to_premise": "modified_execution",
+                    "origin": "introduced_in_counterfactual"
                 })
     
     return ParsedQuery(

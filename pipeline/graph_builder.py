@@ -4,7 +4,6 @@ import spacy
 import ast
 from .parser import ParsedQuery
 
-# Load spaCy NLP model silently
 try:
     nlp = spacy.load("en_core_web_sm")
 except OSError:
@@ -87,40 +86,52 @@ class CausalGraph:
 
     def _build_nlp_graph(self):
         """Constructs an entity-interaction state space for CRASS Natural Language."""
-        # Active entities defines the state space strictly BEFORE any counterfactuals occur!
+        doc = nlp(self.original_state.get("premise", ""))
         active_entities = self.original_state.get("active_entities", [])
         
-        # 1. Add all temporal active entities to the DAG explicitly 
-        for entity in active_entities:
-            self.graph.add_node(entity, type="entity")
-            
-        premise = self.original_state.get("premise", "")
-        if not premise or not nlp:
-            return
-            
-        doc = nlp(premise)
-        
-        # 2. Reconstruct physical action edges bridging the nouns
+        # 1. Map entities to their descriptive adjectives
+        adj_map = {}
+        for token in doc:
+            ent_key = token.lemma_.lower() if token.lemma_.lower() in active_entities else token.text.lower()
+            if ent_key in active_entities:
+                adjs = [child.text for child in token.children if child.dep_ == 'amod']
+                if adjs:
+                    adj_map[ent_key] = " ".join(adjs)
+
+        # 2. Spawn baseline nodes with properties
+        for ent in active_entities:
+            attrs = {"type": "entity"}
+            if ent in adj_map:
+                attrs["adjective"] = adj_map[ent]
+            self.graph.add_node(ent, **attrs)
+
+        # 3. Enhanced NLP topological mapping bridging prep dependencies
         for token in doc:
             if token.pos_ == "VERB":
-                # Find the subject doing the verb
-                subject = None
-                for child in token.lefts:
-                    if child.dep_ == "nsubj":
-                        subject = child.lemma_.lower()
-                        break
-                        
-                # Find the object receiving the verb
+                subj = None
                 dobj = None
-                for child in token.rights:
-                    if child.dep_ in ["dobj", "pobj"]:
-                        dobj = child.lemma_.lower()
-                        break
+                pobjs = []
                 
-                # If we have both, draw a directed edge mapping the causal action
-                if subject and dobj:
-                    if subject in active_entities and dobj in active_entities:
-                        self.graph.add_edge(subject, dobj, relation=token.lemma_)
+                for child in token.children:
+                    child_ent = child.lemma_.lower() if child.lemma_.lower() in active_entities else child.text.lower()
+                    if child.dep_ == "nsubj" and child_ent in active_entities:
+                        subj = child_ent
+                    elif child.dep_ == "dobj" and child_ent in active_entities:
+                        dobj = child_ent
+                    elif child.dep_ == "prep":
+                        for grandchild in child.children:
+                            gc_ent = grandchild.lemma_.lower() if grandchild.lemma_.lower() in active_entities else grandchild.text.lower()
+                            if grandchild.dep_ == "pobj" and gc_ent in active_entities:
+                                pobjs.append((gc_ent, child.text))
+                
+                # Link subject executing verb onto direct object
+                if subj and dobj:
+                    self.graph.add_edge(subj, dobj, relation=token.lemma_)
+                    
+                # Link direct object progressing onto prepositional targets (e.g. stone --on--> foot)
+                if dobj and pobjs:
+                    for pobj, prep in pobjs:
+                        self.graph.add_edge(dobj, pobj, relation=prep)
 
     def _build_code_graph(self):
         """Constructs a data-flow dependency state space for CRUXEval Python code."""

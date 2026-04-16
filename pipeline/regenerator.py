@@ -65,7 +65,7 @@ class CausalRegenerator:
                 # Unpack the nested list-dictionary notation injected by CRUXEval parsers
                 if isinstance(val, dict) and 0 in val and isinstance(val[0], list) and len(val[0]) > 0:
                     val = val[0][0]
-                bullets.append(f"- State Initialization: variable '{var_name}' is set to {val}.")
+                bullets.append(f"- State Initialization: variable '{var_name}' is set to {repr(val)}.")
                 
             # 2. Handle Logic Milestones (structural branch/loop identification)
             elif attrs.get("type") == "constant" and ("branch_" in var_name or "loop_" in var_name):

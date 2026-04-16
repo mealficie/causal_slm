@@ -117,6 +117,10 @@ class InterventionEngine:
         relation = action.get("relation")
         
         if source and target and G.has_node(source) and G.has_node(target):
+            # Resolve Paradox: If A acts on B, B can no longer act on A in the same event space
+            if G.has_edge(target, source):
+                G.remove_edge(target, source)
+                
             # We add or update the relation between the source and target
             G.add_edge(source, target, relation=relation)
 

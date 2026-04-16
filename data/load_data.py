@@ -72,7 +72,7 @@ def load_crass(sample_size: int = None) -> List[Dict[str, Any]]:
             },
             'choices': choices_dict,
             'ground_truth': gt,
-            'domain': 'nl'
+            'domain': 'crass'
         })
         
     if sample_size and sample_size < len(standardized):
@@ -121,7 +121,7 @@ def load_cruxeval(sample_size: int = None) -> List[Dict[str, Any]]:
             },
             'choices': None,
             'ground_truth': target_output,
-            'domain': 'code'
+            'domain': 'cruxeval'
         })
         
     if sample_size and sample_size < len(standardized):

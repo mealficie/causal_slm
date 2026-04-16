@@ -29,6 +29,14 @@ def extract_entities(doc, coref_map=None) -> set:
     entities = set()
     coref_map = coref_map or {}
     for chunk in doc.noun_chunks:
+        # Enforce POS strictness to avoid verb collisions
+        if chunk.root.pos_ not in ("NOUN", "PROPN", "PRON"):
+            continue
+            
+        # Reject sentence roots (main verbs) that SpaCy mathematically misidentified as nouns
+        if chunk.root.dep_ == "ROOT":
+            continue
+            
         if chunk.root.pos_ == "PRON":
             pron = chunk.root.text.lower()
             if pron in coref_map:
@@ -131,9 +139,7 @@ def parse_nl(premise: str, question: str) -> ParsedQuery:
         }
         if dropped_nouns:
             sub_dict["deleted_entities"] = list(dropped_nouns)
-            for dead_noun in dropped_nouns:
-                if dead_noun in all_entities:
-                    all_entities.remove(dead_noun)
+            # Removed aggressive garbage collection to preserve network topologies
         interventions.append(sub_dict)
             
     # Sweep 3: Enhanced Property Addition Checks
@@ -218,7 +224,7 @@ def parse_nl(premise: str, question: str) -> ParsedQuery:
                 })
     
     return ParsedQuery(
-        domain="nl",
+        domain="crass",
         original_state=original_state,
         interventions=interventions,
         all_entities=all_entities

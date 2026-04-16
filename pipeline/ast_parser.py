@@ -47,6 +47,25 @@ class CodeVisitor(ast.NodeVisitor):
                     self.constants[target.id] = node.value.value
         self.generic_visit(node)
 
+    def visit_If(self, node):
+        # Capture critical decision branches
+        cond_str = ast.unparse(node.test)
+        self.constants[f"branch_if_{len(self.constants)}"] = f"depends on {cond_str}"
+        self.generic_visit(node)
+
+    def visit_For(self, node):
+        # Capture iterations
+        target_str = ast.unparse(node.target)
+        iter_str = ast.unparse(node.iter)
+        self.constants[f"loop_for_{len(self.constants)}"] = f"iterates {target_str} over {iter_str}"
+        self.generic_visit(node)
+
+    def visit_While(self, node):
+        # Capture conditional loops
+        cond_str = ast.unparse(node.test)
+        self.constants[f"loop_while_{len(self.constants)}"] = f"repeats while {cond_str}"
+        self.generic_visit(node)
+
 def parse_code(code: str, input_val: Any) -> ParsedQuery:
     """Uses Python's AST module to dynamically map function parameters and state memory."""
     tree = ast.parse(code)
@@ -88,7 +107,7 @@ def parse_code(code: str, input_val: Any) -> ParsedQuery:
     all_entities = list(visitor.parameters) + local_vars + list(visitor.constants.keys())
     
     return ParsedQuery(
-        domain="code",
+        domain="cruxeval",
         original_state=original_state,
         interventions=[intervention],
         all_entities=all_entities

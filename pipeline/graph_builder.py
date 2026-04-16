@@ -77,9 +77,9 @@ class CausalGraph:
 
     def build_graph(self):
         """Routes to the correct mathematical builder based on domain."""
-        if self.domain == "nl":
+        if self.domain == "crass":
             self._build_nlp_graph()
-        elif self.domain == "code":
+        elif self.domain == "cruxeval":
             self._build_code_graph()
         else:
             raise ValueError(f"Unknown domain for graph building: {self.domain}")
@@ -134,6 +134,11 @@ class CausalGraph:
                 if dobj and pobjs:
                     for pobj, prep in pobjs:
                         self.graph.add_edge(dobj, pobj, relation=prep)
+                        
+                # Ensure intransitive verbs with prepositions are mapped (e.g. branch floats in pond)
+                elif subj and pobjs and not dobj:
+                    for pobj, prep in pobjs:
+                        self.graph.add_edge(subj, pobj, relation=token.lemma_)
 
     def _build_code_graph(self):
         """Constructs a data-flow dependency state space for CRUXEval Python code."""

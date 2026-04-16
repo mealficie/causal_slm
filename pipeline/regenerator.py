@@ -14,10 +14,10 @@ class CausalRegenerator:
         if not graph_summary:
             return ""
             
-        domain = graph_summary.get("domain", "nl")
-        if domain == "nl":
+        domain = graph_summary.get("domain", "crass")
+        if domain == "crass":
             return self._flatten_nl_graph(graph_summary)
-        elif domain == "code":
+        elif domain == "cruxeval":
             return self._flatten_code_graph(graph_summary)
         else:
             return ""
@@ -27,7 +27,7 @@ class CausalRegenerator:
         Converts the NLP graph structure into bulleted facts.
         """
         bullets = []
-        bullets.append("CAUSAL LOGIC STATE:")
+        bullets.append("COUNTERFACTUAL EVENT STATE (Analyze these physical changes to determine the realistic outcome):")
         
         # 1. Evaluate Entity States
         for node in graph_summary.get("nodes", []):
@@ -38,8 +38,6 @@ class CausalRegenerator:
                     bullets.append(f"- Entity '{ent_name}' has property: {attrs['adjective']} (replaces {attrs['replaced_adjective']}).")
                 else:
                     bullets.append(f"- Entity '{ent_name}' has property: {attrs['adjective']}.")
-            else:
-                bullets.append(f"- Entity '{ent_name}' is unmodified.")
                 
         # 2. Evaluate Executed Relationships
         for edge in graph_summary.get("edges", []):
@@ -52,19 +50,26 @@ class CausalRegenerator:
         
     def _flatten_code_graph(self, graph_summary: Dict[str, Any]) -> str:
         """
-        Converts a code tree graph back into execution overrides.
+        Converts a code tree graph back into execution overrides and logic milestones.
         """
         bullets = []
-        bullets.append("CODE EXECUTION STATE:")
+        bullets.append("CAUSAL LOGIC STATE:")
         
         for node in graph_summary.get("nodes", []):
             var_name = node[0]
             attrs = node[1]
+            
+            # 1. Handle Overrides/Bindings
             if attrs.get("type") in ("parameter", "intervention_override") and "value" in attrs:
                 val = attrs["value"]
                 # Unpack the nested list-dictionary notation injected by CRUXEval parsers
                 if isinstance(val, dict) and 0 in val and isinstance(val[0], list) and len(val[0]) > 0:
                     val = val[0][0]
-                bullets.append(f"- EXECUTION OVERRIDE: parameter '{var_name}' is strictly set to {val}.")
+                bullets.append(f"- State Initialization: variable '{var_name}' is set to {val}.")
+                
+            # 2. Handle Logic Milestones (structural branch/loop identification)
+            elif attrs.get("type") == "constant" and ("branch_" in var_name or "loop_" in var_name):
+                milestone_desc = attrs.get("value", "")
+                bullets.append(f"- Logic Milestone: {milestone_desc}.")
                 
         return "\n".join(bullets)

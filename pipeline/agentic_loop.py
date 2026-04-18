@@ -215,7 +215,7 @@ class AgentState:
         self.domain = item.get("domain", "crass")
         self.ablation_config = ablation_config or {}
         
-        # Component 1 & 2: Initial Setup
+        # Component 1: Parse
         self.parsed_query = parse_query(item, self.domain)
         # Apply ablation filters
         if self.ablation_config.get("disable_attributes"):
@@ -223,8 +223,16 @@ class AgentState:
         if self.ablation_config.get("disable_relationships"):
             self.parsed_query.interventions = [i for i in self.parsed_query.interventions if i["type"] != "relationship_shift"]
             
+        # Component 2 & 3: Build and Mutate
+        # We run interventions immediately to get the "Proposed Graph"
         self.baseline_graph = CausalGraph(self.parsed_query)
-        self.graph_summary = self.baseline_graph.get_summary()
+        if self.ablation_config.get("disable_interventions"):
+            self.active_graph = self.baseline_graph
+        else:
+            engine = InterventionEngine()
+            self.active_graph = engine.apply_interventions(self.baseline_graph, self.parsed_query.interventions)
+        
+        self.graph_summary = self.active_graph.get_summary()
         self.edges = self.graph_summary.get("edges", [])
         self.scores = [0.0] * len(self.edges)
         
@@ -235,18 +243,13 @@ class AgentState:
         self.active_low_idx = None
         
     def get_final_context(self) -> str:
-        """Component 3 & 4: Finalize the result."""
-        if self.ablation_config.get("disable_interventions"):
-            mutated_graph = self.baseline_graph
-        else:
-            engine = InterventionEngine()
-            mutated_graph = engine.apply_interventions(self.baseline_graph, self.parsed_query.interventions)
-        
-        mutated_summary = mutated_graph.get_summary()
-        mutated_summary["edges"] = self.edges
+        """Component 4: Finalize the result."""
+        # Use the finalized summary from the agentic loop
+        final_summary = self.active_graph.get_summary()
+        final_summary["edges"] = self.edges  # Use the refined edge list
         
         regenerator = CausalRegenerator()
-        return regenerator.generate_context(mutated_summary)
+        return regenerator.generate_context(final_summary)
 
 def build_batch_confidence_prompts(states: List[AgentState], condition: str) -> List[str]:
     return [_build_confidence_prompt(s.domain, s.parsed_query, s.graph_summary, condition) for s in states]

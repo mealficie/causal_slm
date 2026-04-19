@@ -105,21 +105,41 @@ def run_condition(
             active_states = [s for s in states if not s.finished and any(sc < CONFIDENCE_THRESHOLD for sc in s.scores)]
             if not active_states: break
             
-            # STEP B: Batch Hypothesis Generation
-            hyp_prompts = build_batch_hypothesis_prompts(states) # builds for all, but skips finished
-            hyp_responses = _batch_llm_call(model, tokenizer, hyp_prompts, max_new_tokens=128)
-            
-            # STEP C: Local Sandbox Execution
-            observations = []
-            for s, test_resp in zip(states, hyp_responses):
-                if test_resp is None:
-                    observations.append(None)
+            # STEP B+C: Sequential Hypothesis Generation + Sandbox
+            # NOTE: hypothesis prompts vary greatly in length per item, causing
+            # batch padding to collapse attention and produce empty strings.
+            # We process only the active items one at a time.
+            hyp_responses = [None] * len(states)
+            observations  = [None] * len(states)
+            for idx, s in enumerate(states):
+                low_idx = next((i for i, sc in enumerate(s.scores) if sc < CONFIDENCE_THRESHOLD), None)
+                s.active_low_idx = low_idx
+                if low_idx is None or s.finished:
                     continue
-                s.active_test_line = test_resp.strip()
+                edge = s.edges[low_idx]
+                src, tgt, data = edge[0], edge[1], edge[2]
+                rel = data.get("relation", "relates_to")
+                
+                # Generate the hypothesis test (sequential single call)
                 if s.domain == "cruxeval":
-                    observations.append(_sandbox_cruxeval(s.parsed_query.original_state.get("code", ""), s.active_test_line, engine))
+                    hyp_prompt = _build_cruxeval_hypothesis_prompt(
+                        s.parsed_query.original_state.get("code", ""), src, tgt, rel)
                 else:
-                    observations.append(_sandbox_crass(s.active_test_line, model, tokenizer))
+                    hyp_prompt = _build_crass_hypothesis_prompt(
+                        s.parsed_query.original_state.get("premise", ""), src, tgt, rel)
+                
+                from causal_slm.pipeline.agentic_loop import _llm_call as _single_llm_call
+                test_resp = _single_llm_call(model, tokenizer, hyp_prompt, max_new_tokens=64).strip()
+                hyp_responses[idx] = test_resp
+                s.active_test_line = test_resp
+                
+                # Run the sandbox
+                if s.domain == "cruxeval":
+                    observations[idx] = _sandbox_cruxeval(
+                        s.parsed_query.original_state.get("code", ""), test_resp, engine)
+                else:
+                    observations[idx] = _sandbox_crass(test_resp, model, tokenizer)
+
                     
             # STEP D: Batch Graph Updates
             update_prompts = build_batch_update_prompts(states, observations)

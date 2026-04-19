@@ -52,43 +52,39 @@ def _build_confidence_prompt(
     if domain == "cruxeval":
         code_snippet = parsed_query.original_state.get("code", "")
         rubric = (
-            "Score each edge between 0.0 and 1.0 using this rubric:\n"
-            "  0.9-1.0 : Explicit direct dependency — direct variable assignment or explicit function argument.\n"
-            "  0.5-0.8 : Implicit dependency — variables interact inside a while-loop or if-block.\n"
-            "  0.1-0.4 : Weak co-occurrence — variables share the same scope but no obvious syntactic link.\n"
+            "Classify each edge as PLAUSIBLE or SUSPECT:\n"
+            "  PLAUSIBLE : The relationship directly follows from the code (e.g., direct variable assignment or function argument).\n"
+            "  SUSPECT   : The relationship is ambiguous or cannot be confirmed from reading the code.\n"
         )
         context_block = f"CODE SNIPPET:\n```python\n{code_snippet}\n```\n"
     else:  # crass
         premise = parsed_query.original_state.get("premise", "")
         rubric = (
-            "Score each edge between 0.0 and 1.0 using this rubric:\n"
-            "  0.9-1.0 : Explicit causal indicator — 'because of', explicit if/then structure.\n"
-            "  0.5-0.8 : Sequential narrative implication — causality implied but not explicitly stated.\n"
-            "  0.1-0.4 : Mere co-occurrence — entities share the same sentence with no clear causal link.\n"
+            "Classify each edge as PLAUSIBLE or SUSPECT:\n"
+            "  PLAUSIBLE : The action is physically possible and consistent with the real world.\n"
+            "  SUSPECT   : The action is physically impossible or absurd.\n"
         )
         context_block = f"PREMISE: \"{premise}\"\n"
 
     if condition == "cot":
         response_instruction = (
-            "For each edge, first briefly explain WHY you assigned that score "
-            "(one sentence), then provide the final score.\n"
+            "For each edge, give one sentence explaining your classification, then classify it.\n"
             "Respond ONLY with a JSON list in this exact format:\n"
-            f'[{{"edge_idx": 0, "score": 0.72, "reason": "variables co-occur inside an if-block but the assignment is indirect"}}, ...]\n'
+            '[{"edge_idx": 0, "label": "SUSPECT", "reason": "branches cannot produce sound"}]\n'
             "If there are no edges, respond with: []\n"
             "JSON:"
         )
     else:
         response_instruction = (
-            "Respond ONLY with a compact JSON list. Do NOT add any explanation outside the JSON.\n"
-            f'[{{"edge_idx": 0, "score": 0.92, "reason": "direct assignment"}}, ...]\n'
+            "Respond ONLY with a compact JSON list. No explanation outside the JSON.\n"
+            '[{"edge_idx": 0, "label": "PLAUSIBLE"}]\n'
             "If there are no edges, respond with: []\n"
             "JSON:"
         )
 
     prompt = (
-        f"You are a causal graph confidence evaluator.\n\n"
+        f"You are a physical plausibility checker for causal graph edges.\n\n"
         f"{context_block}\n"
-        f"EXTRACTED NODES: {nodes_str}\n\n"
         f"EXTRACTED CAUSAL EDGES:\n{edges_str}\n\n"
         f"{rubric}\n"
         f"{response_instruction}"
@@ -97,6 +93,12 @@ def _build_confidence_prompt(
 
 
 def _parse_confidence_scores(response: str, num_edges: int) -> List[float]:
+    """
+    Parse PLAUSIBLE/SUSPECT labels into scores.
+    PLAUSIBLE → 1.0 (above threshold, no sandbox needed)
+    SUSPECT   → 0.0 (below threshold, triggers sandbox)
+    Fallback  → 0.0 (conservative: test anything we cannot parse)
+    """
     try:
         clean = response.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         start = clean.find("[")
@@ -104,15 +106,15 @@ def _parse_confidence_scores(response: str, num_edges: int) -> List[float]:
         if start == -1 or end == 0:
             raise ValueError("No JSON list found")
         data = json.loads(clean[start:end])
-        scores = [0.9] * num_edges
+        scores = [0.0] * num_edges  # conservative default: everything is SUSPECT until proven PLAUSIBLE
         for item in data:
             idx = item.get("edge_idx", -1)
             if 0 <= idx < num_edges:
-                scores[idx] = float(item.get("score", 0.9))
+                label = str(item.get("label", "SUSPECT")).strip().upper()
+                scores[idx] = 1.0 if label == "PLAUSIBLE" else 0.0
         return scores
     except Exception:
-        # Conservative fallback — assume we need to test all edges
-        return [0.5] * num_edges
+        return [0.0] * num_edges  # conservative fallback: trigger sandbox for all
 
 
 def _build_cruxeval_hypothesis_prompt(code: str, source: str, target: str, relation: str) -> str:

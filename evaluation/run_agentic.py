@@ -57,7 +57,8 @@ def run_condition(
     from causal_slm.pipeline.agentic_loop import (
         AgentState, build_batch_confidence_prompts, build_batch_hypothesis_prompts,
         build_batch_update_prompts, _parse_confidence_scores, _apply_graph_updates,
-        _sandbox_cruxeval, _sandbox_crass, CONFIDENCE_THRESHOLD, MAX_ITERATIONS
+        _sandbox_cruxeval, _sandbox_crass, CONFIDENCE_THRESHOLD, MAX_ITERATIONS,
+        _build_crass_hypothesis_prompt, _build_cruxeval_hypothesis_prompt, _llm_call,
     )
     
     template_str = get_prompt_template(domain, condition)
@@ -65,9 +66,9 @@ def run_condition(
     results = []
     
     print(f"Running BATCHED AGENTIC pipeline {model_name} on {domain} ({condition}) - {len(data)} examples")
-    
+    data = [item for item in data]
     for i in tqdm(range(0, len(data), batch_size)):
-        batch_items = data[i:i+batch_size]
+        batch_items = data[i : i + batch_size]
         start_time = time.time()
         
         # 1. Initialize Agent States and traces for the batch
@@ -117,8 +118,8 @@ def run_condition(
                 if low_idx is None or s.finished:
                     continue
                 edge = s.edges[low_idx]
-                src, tgt, data = edge[0], edge[1], edge[2]
-                rel = data.get("relation", "relates_to")
+                src, tgt, edge_data = edge[0], edge[1], edge[2]
+                rel = edge_data.get("relation", "relates_to")
                 
                 # Generate the hypothesis test (sequential single call)
                 if s.domain == "cruxeval":
@@ -128,8 +129,7 @@ def run_condition(
                     hyp_prompt = _build_crass_hypothesis_prompt(
                         s.parsed_query.original_state.get("premise", ""), src, tgt, rel)
                 
-                from causal_slm.pipeline.agentic_loop import _llm_call as _single_llm_call
-                test_resp = _single_llm_call(model, tokenizer, hyp_prompt, max_new_tokens=64).strip()
+                test_resp = _llm_call(model, tokenizer, hyp_prompt, max_new_tokens=64).strip()
                 hyp_responses[idx] = test_resp
                 s.active_test_line = test_resp
                 

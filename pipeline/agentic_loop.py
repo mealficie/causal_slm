@@ -131,13 +131,11 @@ def _build_cruxeval_hypothesis_prompt(code: str, source: str, target: str, relat
 
 def _build_crass_hypothesis_prompt(premise: str, source: str, target: str, relation: str) -> str:
     return (
-        f"You are a counterfactual reasoning analyst.\n\n"
-        f"PREMISE: \"{premise}\"\n\n"
-        f"WEAK CAUSAL EDGE: `{source}` --[{relation}]--> `{target}`\n\n"
-        f"Task: Write ONE self-contained binary Yes/No question that isolates and directly tests "
-        f"whether `{source}` causally influences `{target}` in the context of this premise.\n"
-        f"Respond with ONLY the question, nothing else."
+        f"Answer with only 'Yes' or 'No'.\n\n"
+        f"Is it physically possible for a {source} to {relation} a {target}?\n\n"
+        f"Answer:"
     )
+
 
 def _sandbox_cruxeval(code: str, test_line: str, intervention_engine: InterventionEngine) -> str:
     observation = ""
@@ -171,19 +169,20 @@ def _build_graph_update_prompt(
     observation: str,
 ) -> str:
     edges_str = "\n".join(
-        f"  [{i}] {e[0]} --[{e[2].get('relation', '?')}]--> {e[1]}  (score={scores[i]:.2f})"
+        f"  [{i}] {e[0]} --[{e[2].get('relation', '?')}]--> {e[1]}"
         for i, e in enumerate(edges)
     )
     return (
-        f"You are a causal graph refinement agent.\n\n"
-        f"CURRENT CAUSAL EDGES:\n{edges_str}\n\n"
-        f"You ran this hypothesis test on edge [{tested_edge_idx}]:\n"
-        f"  TEST: {test_line}\n"
-        f"  {observation}\n\n"
-        f"Based on this new evidence, update the edge list and confidence scores.\n"
-        f"Respond ONLY with a JSON list of updated edge objects in this exact format:\n"
-        f'[{{"edge_idx": 0, "keep": true, "score": 0.95, "reason": "confirmed by test"}}, ...]\n'
-        f"To remove an edge set `\"keep\": false`.\n"
+        f"You are a causal graph editor. Decide whether to KEEP or REMOVE edge [{tested_edge_idx}].\n\n"
+        f"CAUSAL EDGES:\n{edges_str}\n\n"
+        f"EVIDENCE:\n"
+        f"  Question: {test_line}\n"
+        f"  Answer:   {observation}\n\n"
+        f"DECISION RULES:\n"
+        f"  Answer is 'Yes' → the action is physically possible → KEEP the edge.\n"
+        f"  Answer is 'No'  → the action is physically impossible → REMOVE the edge.\n\n"
+        f"Respond ONLY with a JSON list for edge [{tested_edge_idx}]:\n"
+        f'[{{"edge_idx": {tested_edge_idx}, "keep": true, "reason": "action is physically possible"}}]\n'
         f"JSON:"
     )
 
@@ -202,7 +201,8 @@ def _apply_graph_updates(edges: List, scores: List[float], response: str) -> Tup
             upd = update_map.get(i)
             if upd and not upd.get("keep", True):
                 continue  # Prune the edge
-            new_score = float(upd["score"]) if upd and "score" in upd else score
+            # If keep=True (or not mentioned), mark as confirmed (0.95); otherwise keep existing score
+            new_score = 0.95 if (upd and upd.get("keep", True)) else score
             new_edges.append(edge)
             new_scores.append(new_score)
         return new_edges, new_scores

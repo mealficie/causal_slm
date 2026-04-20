@@ -130,24 +130,28 @@ def _build_cruxeval_hypothesis_prompt(code: str, source: str, target: str, relat
 
 
 def _build_crass_hypothesis_prompt(premise: str, source: str, target: str, relation: str) -> str:
-    return (
-        f"Answer with only 'Yes' or 'No'.\n\n"
-        f"Is it physically possible for a {source} to {relation} a {target}?\n\n"
-        f"Answer:"
-    )
+    return f"Is it physically possible for a {source} to {relation} a {target}?"
 
+
+import signal
+def _timeout_handler(signum, frame):
+    raise TimeoutError("Execution exceeded 3 seconds")
 
 def _sandbox_cruxeval(code: str, test_line: str, intervention_engine: InterventionEngine) -> str:
     observation = ""
     combined_code = f"{code}\n\n# Hypothesis test injected by Agentic Loop\n{test_line}"
     stdout_capture = io.StringIO()
     try:
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(3)
         with contextlib.redirect_stdout(stdout_capture):
             exec(compile(combined_code, "<agentic_test>", "exec"), {})  # isolated namespace
         output = stdout_capture.getvalue().strip()
         observation = f"EXECUTION OUTPUT: {output!r}" if output else "EXECUTION OUTPUT: (no output)"
     except Exception as exc:
         observation = f"EXECUTION ERROR: {type(exc).__name__}: {exc}"
+    finally:
+        signal.alarm(0)
     return observation
 
 
@@ -172,6 +176,24 @@ def _build_graph_update_prompt(
         f"  [{i}] {e[0]} --[{e[2].get('relation', '?')}]--> {e[1]}"
         for i, e in enumerate(edges)
     )
+    
+    if domain == "cruxeval":
+        return (
+            f"You are a causal graph editor analyzing Python code execution. Decide whether to KEEP or REMOVE edge [{tested_edge_idx}].\n\n"
+            f"CAUSAL EDGES:\n{edges_str}\n\n"
+            f"EVIDENCE:\n"
+            f"  Executed Test Line: {test_line}\n"
+            f"  Sandbox Output:   {observation}\n\n"
+            f"DECISION RULES:\n"
+            f"  If the Sandbox Output shows the edge test was successful (no execution error) → KEEP the edge.\n"
+            f"  If the Sandbox Output shows an Execution Error or unexpected failure → REMOVE the edge.\n\n"
+            f"Respond ONLY with a JSON list for edge [{tested_edge_idx}]. If keeping:\n"
+            f'[{{"edge_idx": {tested_edge_idx}, "keep": true, "reason": "execution was successful"}}]\n'
+            f"If removing, you MUST provide a replacement edge [source, target, relation]:\n"
+            f'[{{"edge_idx": {tested_edge_idx}, "keep": false, "reason": "execution failed", "replacement": ["var1", "var2", "mutates"]}}]\n'
+            f"JSON:"
+        )
+
     return (
         f"You are a causal graph editor. Decide whether to KEEP or REMOVE edge [{tested_edge_idx}].\n\n"
         f"CAUSAL EDGES:\n{edges_str}\n\n"
@@ -181,11 +203,12 @@ def _build_graph_update_prompt(
         f"DECISION RULES:\n"
         f"  Answer is 'Yes' → the action is physically possible → KEEP the edge.\n"
         f"  Answer is 'No'  → the action is physically impossible → REMOVE the edge.\n\n"
-        f"Respond ONLY with a JSON list for edge [{tested_edge_idx}]:\n"
-        f'[{{"edge_idx": {tested_edge_idx}, "keep": true, "reason": "action is physically possible"}}]\n'
+        f"Respond ONLY with a JSON list for edge [{tested_edge_idx}]. If keeping:\n"
+        f'[{{"edge_idx": {tested_edge_idx}, "keep": true, "reason": "action is possible"}}]\n'
+        f"If removing, you MUST provide a replacement edge [source, target, relation]:\n"
+        f'[{{"edge_idx": {tested_edge_idx}, "keep": false, "reason": "action is impossible", "replacement": ["new_source", "new_target", "new_relation"]}}]\n'
         f"JSON:"
     )
-
 
 def _apply_graph_updates(edges: List, scores: List[float], response: str) -> Tuple[List, List[float]]:
     """Parse the graph update response and prune / rescore edges accordingly."""
@@ -200,14 +223,35 @@ def _apply_graph_updates(edges: List, scores: List[float], response: str) -> Tup
         for i, (edge, score) in enumerate(zip(edges, scores)):
             upd = update_map.get(i)
             if upd and not upd.get("keep", True):
-                continue  # Prune the edge
-            # If keep=True (or not mentioned), mark as confirmed (0.95); otherwise keep existing score
+                # If there's a replacement proposed, append it to the graph with a score of 0.0
+                replacement = upd.get("replacement")
+                if replacement and isinstance(replacement, list) and len(replacement) == 3:
+                    new_edge = [replacement[0], replacement[1], {"relation": replacement[2]}]
+                    new_edges.append(new_edge)
+                    new_scores.append(0.0) # Will be tested next iteration!
+                continue  # Prune the original edge
             new_score = 0.95 if (upd and upd.get("keep", True)) else score
             new_edges.append(edge)
             new_scores.append(new_score)
         return new_edges, new_scores
     except Exception:
-        return edges, scores  # Failsafe: keep original
+        # Fallback to string matching if JSON parsing fails
+        resp_lower = response.lower()
+        new_edges = []
+        new_scores = []
+        # If the model strongly says REMOVE, prune everything we are testing
+        should_remove = "remove" in resp_lower and "keep" not in resp_lower
+        for edge, score in zip(edges, scores):
+            if score < 0.7:  # This edge was being tested
+                if should_remove:
+                    continue  # Prune
+                else:
+                    new_scores.append(0.95)  # Keep and confirm
+                    new_edges.append(edge)
+            else:
+                new_scores.append(score)
+                new_edges.append(edge)
+        return new_edges, new_scores
 
 
 class AgentState:

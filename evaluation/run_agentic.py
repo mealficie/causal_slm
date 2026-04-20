@@ -125,11 +125,11 @@ def run_condition(
                 if s.domain == "cruxeval":
                     hyp_prompt = _build_cruxeval_hypothesis_prompt(
                         s.parsed_query.original_state.get("code", ""), src, tgt, rel)
+                    test_resp = _llm_call(model, tokenizer, hyp_prompt, max_new_tokens=64).strip()
                 else:
-                    hyp_prompt = _build_crass_hypothesis_prompt(
+                    test_resp = _build_crass_hypothesis_prompt(
                         s.parsed_query.original_state.get("premise", ""), src, tgt, rel)
                 
-                test_resp = _llm_call(model, tokenizer, hyp_prompt, max_new_tokens=64).strip()
                 hyp_responses[idx] = test_resp
                 s.active_test_line = test_resp
                 
